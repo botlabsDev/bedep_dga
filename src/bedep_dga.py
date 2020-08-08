@@ -11,77 +11,134 @@
 # WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
-import urllib2
-import xml.etree.ElementTree as ET
-import struct
 import json
+import logging
 import random
+import struct
+from datetime import datetime, timedelta
 from decimal import Decimal
-from datetime import datetime
+from pathlib import Path
+from xml.etree import ElementTree
+
+from src.common import cache_file, get_dgarchive_dga_name, date_start, date_end, next_thursday
+
+logging.basicConfig(filename=f"{__file__}.log", level=logging.DEBUG)
+
+URL_UTCTIME_XML = "http://new.earthtools.org/timezone/0/0"
+# CURRENCY_XML = "http://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml" # original file requested py bedep
+URL_CURRENCY_XML = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml"  # file with full history
+
 
 class BedepDGA:
 
-    def __init__(self, config):
+    def __init__(self, config, date):
         self.config = config
+        self.date = date
+        self.validFrom = None
+        self.validTill = None
 
-        self.utctime_xml = "http://new.earthtools.org/timezone/0/0"
-        self.currency_xml = "http://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml"
+        self._checkValidDate(self.date)
 
         self.max_currencies = self.config["max_currencies"]
+        self.transform2_table = self._load_table(self.config["table"])
+        self.main = self._getMainStruct()
 
+    def _checkValidDate(self, date):
+        if ((date_start(datetime.now()) == next_thursday() - timedelta(days=1))
+                and (date <= next_thursday())):
+            return
+
+        elif date >= next_thursday():
+            print("###")
+            print("Can not calculate the requested domains. The DGA generates domains each Wednesday for the following "
+                  "seven days. Please try again on Wednesday.")
+            print("###")
+            exit()
+
+    @property
+    def run(self):
+        # domains valid from Thursday to Wednesday == 7 days
+        # calculation based on currency data from Tuesday, published on Wednesday
+
+        # field_38 of "xml" struct
+        three_days_ago = self.get_three_days_ago()
+
+        # field_3c of "xml" struct"
+        day_of_week = 1  # monday
+
+        currency_xml = self.get_xml_from_url(URL_CURRENCY_XML)
+        dates = self.extract_dates_from_currency(currency_xml)
+
+        logging.debug("\tfinding correct days since:")
+        for date in dates:
+            dt = datetime.strptime(date, "%Y-%m-%d")
+            # month and day of "date"  are decremented by 1 for days_since algorithm
+            # returned days_since will be "date" minus 1
+
+            days_since = self.get_days_since(dt.year, dt.month - 1, dt.day - 1)
+            logging.debug((f"\t\ttrying: 0x{hex(days_since)} ({days_since})"))
+
+            if days_since <= three_days_ago and (days_since + 5) % 7 == day_of_week:
+                logging.debug(f"\tfound correct days since: {date}")
+
+                currencies = self.get_currencies(currency_xml, date)
+                self.main["days_since"] = days_since
+                self.validFrom = date_start(date) + timedelta(days=2)
+                self.validTill = date_end(date) + timedelta(days=7 + 1)
+                break
+
+        self.transform1(currencies)
+
+        domains = [self.transform10(currencies) for _ in range(self.main["num_domains"])]
+        seed = get_dgarchive_dga_name(self.config)
+
+        for domain in domains:
+            yield seed, self.validFrom, self.validTill, domain
+
+    def _load_table(self, table_name):
         # table extracted from dll
-        fp = open(self.config["table"], "rb")
-        self.transform2_table = json.loads(fp.read())
-        fp.close()
+        with (Path(__file__).parent / "transform_tables" / table_name).open("rb") as fp:
+            return json.loads(fp.read())
 
+    def _getMainStruct(self):
         # main "struct"
-        self.main = {}
+        mainStruct = {}
 
         # affected by transform1
-        self.main["num_domains"] = None # field_0
-        self.main["field_4"] = None # generated seed
-        self.main["field_8"] = None # part of generated seed
-        self.main["field_c"] = None # part of generated seed
+        mainStruct["num_domains"] = None  # field_0
+        mainStruct["field_4"] = None  # generated seed
+        mainStruct["field_8"] = None  # part of generated seed
+        mainStruct["field_c"] = None  # part of generated seed
 
-        self.main["min_domain_len"] = 0xc # field_10, constant
-        self.main["field_14"] = 0x12 # constant, part of domain len modulus
-        self.main["field_18"] = 0x16 # constant, part of generated seed
-        self.main["field_1c"] = 0x1c # constant, part of generated seed
-        self.main["tld"] = ".com" # field_20
-        self.main["field_28"] = self.config["value1"]
-        self.main["days_since"] = None # field_30, calculated from xml
+        mainStruct["min_domain_len"] = 0xc  # field_10, constant
+        mainStruct["field_14"] = 0x12  # constant, part of domain len modulus
+        mainStruct["field_18"] = 0x16  # constant, part of generated seed
+        mainStruct["field_1c"] = 0x1c  # constant, part of generated seed
+        mainStruct["tld"] = ".com"  # field_20
 
+        mainStruct["field_28"] = self.config["value1"]
+        mainStruct["days_since"] = None  # field_30, calculated from xml
+        return mainStruct
 
-    def download_currency_xml(self):
-        request = urllib2.urlopen(self.currency_xml)
-        xml = request.read()
-
-        print "\tdownloaded currency xml, %d bytes" % len(xml)
-
-        return xml
-
-
-    def get_currency_xml_dates(self, xml):
+    def extract_dates_from_currency(self, xml):
         dates = []
 
-        root = ET.fromstring(xml)
+        root = xml
         cube1 = root.find("{http://www.ecb.int/vocabulary/2002-08-01/eurofxref}Cube")
         cube2s = cube1.findall("{http://www.ecb.int/vocabulary/2002-08-01/eurofxref}Cube")
         for cube2 in cube2s:
             dates.append(cube2.get("time"))
 
-        print "\tparsed %d dates from currency xml" % len(dates)
-        print "\tfirst date: %s" % dates[0]
-        
-        return dates
+        logging.debug("\tparsed %d dates from currency xml" % len(dates))
+        logging.debug("\tfirst date: %s" % dates[0])
 
+        return dates
 
     def get_days_since(self, year, month, day):
         # days since year 0, 0000-00-00
         # off by a month
-        v4 = year % 400 
-        v5 = 146097 * (year / 400) + day + 365 * (year % 400) + ((year % 400 + 3) >> 2)
+        v4 = year % 400
+        v5 = 146097 * int(year / 400) + day + 365 * (year % 400) + ((year % 400 + 3) >> 2)
 
         if v4 > 100:
             v5 -= 1
@@ -99,44 +156,44 @@ class BedepDGA:
 
         if month > 1:
             result -= 1
-            if v4: 
+            if v4:
                 if v4 & 3 or v4 == 100 or v4 == 200 or v4 == 300:
                     result -= 1
-
         return result
-
 
     def get_three_days_ago(self):
         # days since "three days ago per utctime_xml"
-        request = urllib2.urlopen(self.utctime_xml)
-        xml = request.read()
 
-        root = ET.fromstring(xml)
+        # root = self.get_xml_from_url(URL_UTCTIME_XML)
+        # utctime = root.findall("utctime")[0].text
+        # dt = datetime.strptime(utctime, "%Y-%m-%d %H:%M:%S")
 
-        utctime = root.findall("utctime")[0].text
-        dt = datetime.strptime(utctime, "%Y-%m-%d %H:%M:%S")
+        dt = self.date
 
         # month and day are decremented by 1 for this algorithm
-        days_since = self.get_days_since(dt.year, dt.month-1, dt.day-1)
+        days_since = self.get_days_since(dt.year, dt.month - 1, dt.day - 1)
         milliseconds_since = 3600000 * dt.hour + 86400000 * days_since + 60000 * dt.minute + 1000 * dt.second
         three_days_ago = (milliseconds_since - 172800000) / 86400000
-        
-        print "\tthree days ago: 0x%x (%d)" % (three_days_ago, three_days_ago)
 
+        logging.debug(f"\tthree days ago: 0x{three_days_ago} ({three_days_ago})")
         return three_days_ago
 
+    def get_xml_from_url(self, url):
+        file = cache_file(url, Path(__file__).parent.parent / "cache")
+        with file.open("rb") as _file:
+            return ElementTree.fromstring(file.read_text())
 
     def get_currencies(self, xml, date):
         currencies = []
 
-        root = ET.fromstring(xml)
+        root = xml
         cube1 = root.find("{http://www.ecb.int/vocabulary/2002-08-01/eurofxref}Cube")
         cube2s = cube1.findall("{http://www.ecb.int/vocabulary/2002-08-01/eurofxref}Cube")
         for cube2 in cube2s:
             if cube2.get("time") == date:
                 for cube3 in cube2:
                     if len(currencies) == self.max_currencies:
-                        print "\thit max currencies (%d)" % len(currencies)
+                        logging.debug("\thit max currencies (%d)" % len(currencies))
                         break
 
                     currency = self.parse_currency(cube3.get("currency"), cube3.get("rate"))
@@ -144,30 +201,29 @@ class BedepDGA:
 
                 break
 
-        print "\tparsed %d currencies from %s (currency date):" % (len(currencies), date)
+        logging.debug("\tparsed %d currencies from %s (currency date):" % (len(currencies), date))
         for currency in currencies:
-            print "\t\t%s: %s" % (currency["name"], currency["rate_str"])
+            logging.debug("\t\t%s: %s" % (currency["name"], currency["rate_str"]))
 
         return currencies
-
 
     def parse_currency(self, name, rate):
         currency = {}
 
         currency["name"] = name
-        currency["name_bin"] = struct.unpack("I", name+"\x00")[0]
+        currency["name_bin"] = struct.unpack("I", name.encode() + b"\x00")[0]
 
         currency["rate_str"] = rate
 
         currency["real_rate_float"] = self.broken_float(rate)
         currency["real_rate"] = struct.unpack("q", struct.pack("d", currency["real_rate_float"]))[0]
-        currency["real_rate_low"], currency["real_rate_high"] = struct.unpack("II", struct.pack("d", currency["real_rate_float"]))
+        currency["real_rate_low"], currency["real_rate_high"] = struct.unpack("II", struct.pack("d", currency[
+            "real_rate_float"]))
 
         # for debugging
         currency["real_rate_hex"] = "0x%x" % struct.unpack("q", struct.pack("d", currency["real_rate_float"]))[0]
 
         return currency
-
 
     def broken_float(self, str_float):
         # bedep's atof()
@@ -184,7 +240,7 @@ class BedepDGA:
         one = int(one)
         two = int(two)
         v10 = 10
-        v11 = 0 
+        v11 = 0
 
         while True:
             if num_digits <= 1:
@@ -192,44 +248,43 @@ class BedepDGA:
 
             if num_digits & 1:
                 if v11:
-                    v11 *= v10 
+                    v11 *= v10
                 else:
-                    v11 = v10 
+                    v11 = v10
 
             num_digits >>= 1
-            v10 *= v10 
+            v10 *= v10
 
         if v11:
-            v10 *= v11 
+            v10 *= v11
 
-        result = Decimal((float(two)/float(v10))+float(one))
+        result = Decimal((float(two) / float(v10)) + float(one))
 
         return result
 
-
     def transform1(self, currencies):
-        math1 = (self.main["field_18"] + (self.main["field_28"] ^ self.main["days_since"])) & 0xffffffff
-        math2 = ((self.main["days_since"] ^ currencies[0]["real_rate_low"]) + (self.main["field_1c"] ^ currencies[0]["name_bin"])) & 0xffffffff
+        logging.debug("\trunning transform1")
 
-        for i in range(len(currencies), 0, -1):
+        math1 = (self.main["field_18"] + (self.main["field_28"] ^ self.main["days_since"])) & 0xffffffff
+        math2 = ((self.main["days_since"] ^ currencies[0]["real_rate_low"])
+                 + (self.main["field_1c"] ^ currencies[0]["name_bin"])) & 0xffffffff
+
+        for _ in range(len(currencies), 0, -1):
             math1 = (self.main["field_28"] ^ (math2 + 0x1a43ba27 * math1)) & 0xffffffff
 
         math4, ret1, ret2 = self.transform2(math1)
         self.transform7(math4, ret1, ret2)
 
-        return 
-
-
     def transform7(self, a1, a2, a3):
         self.main["num_domains"] = a3 - 1
-        print "\t\t%d domains" % self.main["num_domains"]
+        logging.debug("\t\t%d domains" % self.main["num_domains"])
 
         v1, v9 = self.transform8(a1, a2, a3)
 
         v5 = (self.transform9() % (a3 - 1)) + 1
         v6 = self.transform9() % (v1 + 1)
 
-        self.main["field_c"] = a1 
+        self.main["field_c"] = a1
 
         self.main["field_4"] = pow(v9[0], v5, a1)
 
@@ -237,11 +292,9 @@ class BedepDGA:
         if ((v6 - 1) & 0x80000000) == 0:
             v8 = pow(v9[1], v9[2:][v6 - 1], a3)
 
-
         self.main["field_8"] = v8
 
         return
-
 
     def transform9(self):
         # transform is seeded by rdtsc
@@ -251,24 +304,23 @@ class BedepDGA:
 
         # XXX code
         # v0 = rdtsc
-        #v0_lo = 0x3c4017a4
-        #v0_hi = 0x3747
+        # v0_lo = 0x3c4017a4
+        # v0_hi = 0x3747
         # qword = 0x84d4693e80311888 (hardcoded)
-        #v1 = ((qword + 0x18ee4a7a * v0_lo) ^ 0xd29adc50) & 0xffffffff
-        #v2 = ((((self & 0xffffffff00000000) >> 32) + 0x2feea1ae * v0_hi) ^ 0x8dc850c) & 0xffffffff
-        #qword = v1 + self.ntdll_aullmul(v2, 0, 0, 1)
-        #qword = 0x1c63278cca9318e0
-        #return (v2 + 8831 * v1) & 0xffffffff
-
+        # v1 = ((qword + 0x18ee4a7a * v0_lo) ^ 0xd29adc50) & 0xffffffff
+        # v2 = ((((self & 0xffffffff00000000) >> 32) + 0x2feea1ae * v0_hi) ^ 0x8dc850c) & 0xffffffff
+        # qword = v1 + self.ntdll_aullmul(v2, 0, 0, 1)
+        # qword = 0x1c63278cca9318e0
+        # return (v2 + 8831 * v1) & 0xffffffff
 
     def transform8(self, a1, a3, a4):
         a2 = []
 
-        trans4 = pow(a3, ((a1 - 1) / a4), a1)
+        trans4 = pow(a3, int((a1 - 1) / a4), a1)
 
         a2.append(trans4)
 
-        v4 = a4  - 1
+        v4 = a4 - 1
         v5 = 3
         v6 = 0
 
@@ -327,7 +379,7 @@ class BedepDGA:
         if v11:
             v12 = 3
             a2.append(v11)
-            
+
             if a4 > 3:
                 while True:
                     if v12 >= a4:
@@ -350,7 +402,6 @@ class BedepDGA:
 
         return (i, a2)
 
-
     def transform2(self, a1):
         # XXX
         # this transform uses an external table extracted from the dll
@@ -362,7 +413,7 @@ class BedepDGA:
         v20 = []
         for i in range(102):
             table_entry = self.transform2_table[i]
-            
+
             two_idx = [i, 2]
             two = self.transform2_table[two_idx[0]][two_idx[1]]
 
@@ -411,7 +462,6 @@ class BedepDGA:
 
         return (math4, v17, ret2)
 
-
     def transform3(self, a1, a2, a3):
         v3 = 2
         if (a1 >> 1) >= 2:
@@ -429,8 +479,7 @@ class BedepDGA:
                     v5 = a3[a3_idx]
                     a3_idx += 1
 
-                    i = pow(v3, (a1 - 1) / v5, a1)
-
+                    i = pow(v3, int((a1 - 1) / v5), a1)
 
                 v3 += 1
                 if v3 <= (a1 >> 1):
@@ -439,61 +488,14 @@ class BedepDGA:
 
         return 0
 
-
-    def run(self):
-        # field_38 of "xml" struct
-        three_days_ago = self.get_three_days_ago()
-
-        # field_3c of "xml" struct"
-        day_of_week = 1 # monday
-
-        currency_xml = self.download_currency_xml()
-        dates = self.get_currency_xml_dates(currency_xml)
-
-        print "\tfinding correct days since:"
-        for date in dates:
-            dt = datetime.strptime(date, "%Y-%m-%d")
-            
-            # month and day of "date"  are decremented by 1 for days_since algorithm
-            # returned days_since will be "date" minus 1
-            days_since = self.get_days_since(dt.year, dt.month-1, dt.day-1)
-            print "\t\ttrying: 0x%x (%d)" % (days_since, days_since),
-
-            # at least 3 days ago and is on day_of_week
-            if days_since <= three_days_ago and (days_since + 5) % 7 == day_of_week:
-                print "found"
-                break
-            else:
-                print "nope"
-
-        self.main["days_since"] = days_since
-
-        # currency date will be "date"
-        currencies = self.get_currencies(currency_xml, date)
-
-        print "\trunning transforms"
-        self.transform1(currencies)
-        
-        domains = []
-        for i in range(self.main["num_domains"]):
-            domain = self.transform10(currencies)
-            domains.append(domain)
-
-        print "\ttransforms done"
-        print
-        return domains
-           
-
     def transform10(self, currencies):
         self.main["field_4"] = pow(self.main["field_4"], self.main["field_8"], self.main["field_c"])
 
-
-        print "\t\tseed: 0x%x" % self.main["field_4"]
+        logging.debug("\t\tseed: 0x%x" % self.main["field_4"])
 
         domain = self.transform11(currencies, self.main["field_4"])
 
         return domain
-
 
     def transform11(self, currencies, a1):
         domain = []
@@ -503,43 +505,45 @@ class BedepDGA:
         math2 = ((self.main["field_28"] ^ currency["name_bin"]) - (currency["real_rate"] >> 0x20)) & 0xffffffff
 
         for i in range(len(currencies)):
-            math1 = ((self.main["min_domain_len"] + self.main["days_since"] * currency["real_rate_low"]) ^ (math2 + 0x19d65 * (self.main["field_28"] ^ math1))) & 0xffffffff
+            math1 = ((self.main["min_domain_len"] + self.main["days_since"] * currency["real_rate_low"]) ^ (
+                    math2 + 0x19d65 * (self.main["field_28"] ^ math1))) & 0xffffffff
 
         math3 = 0x283 * self.main["days_since"]
 
         # calculate domain len
-        math4 = (self.main["min_domain_len"] + (a1 ^ math1) % (self.main["field_14"] - self.main["min_domain_len"] + 1)) & 0xffffffff
+        math4 = (self.main["min_domain_len"] + (a1 ^ math1) % (
+                self.main["field_14"] - self.main["min_domain_len"] + 1)) & 0xffffffff
         domain_len = math4 - 1
 
         while True:
-            print "\t\t\tmixing in %s's rate" % currency["name"]
+            logging.debug("\t\t\tmixing in %s's rate" % currency["name"])
             if domain_len < 0:
                 break
 
             # generate domain chr
-            math6 = (0x6e93d938959d4fd8 * (self.main["field_28"] + self.main["min_domain_len"] * currency["name_bin"])) & 0xffffffffffffffff
+            math6 = (0x6e93d938959d4fd8 * (self.main["field_28"] + self.main["min_domain_len"] * currency[
+                "name_bin"])) & 0xffffffffffffffff
             math7 = (0x17a87709884ed9f3 * (self.main["field_14"] + currency["real_rate"]) + math6) & 0xffffffffffffffff
 
             v16 = 0x1a
             if domain_len <= 1:
-                v16 = 0x24 
+                v16 = 0x24
 
             domain_chr = ((math3 ^ ((math7 >> 17) - a1)) & 0xffffffff) % v16 + ord("a")
             if domain_chr > 0x7a:
                 domain_chr = ((math3 ^ ((math7 >> 17) - a1)) & 0xffffffff) % v16 + 0x16
 
-            print "\t\t\tdomain chr: %s" % chr(domain_chr)
+            logging.debug(f"\t\t\tdomain chr: {chr(domain_chr)}")
             domain.append(chr(domain_chr))
 
             currency = self.get_next_currency(currencies, math1, currency)
             a1 = (domain_len ^ self.ror(a1, 7, 32)) & 0xffffffff
             domain_len -= 1
-        
+
         domain = "".join(domain) + self.main["tld"]
-        print "\t\t\tdomain: %s" % domain
+        logging.debug("\t\t\tdomain: %s" % domain)
 
         return domain
-
 
     def get_next_currency(self, currencies, offset, prev_currency):
         index = 0
@@ -552,79 +556,13 @@ class BedepDGA:
 
         return currencies[index]
 
-
     def ror(self, num, count, size):
-        return ((num >> count) | (num << (size-count)))
+        return ((num >> count) | (num << (size - count)))
 
 
-if __name__ == "__main__":
-
-    configs = [
-            # AML-18141460
-            {
-                "value1": 0x9be6851a,
-                "value2": 0xd666e1f3,
-                "value3": 0x2666ca48,
-                "table": "transform2_table_var1.json",
-                "max_currencies": 48,
-            },
-            # AML-19646835
-            {
-                "value1": 0x36a64c8a,
-                "value2": 0x7cd02d69,
-                "value3": 0x8cd006d2,
-                "table": "transform2_table_var2.json",
-                "max_currencies": 48,
-            },
-            # AML-20382547
-            {
-                "value1": 0x4cdff15c,
-                "value2": 0x1bbae2d4,
-                "value3": 0xebbac96f,
-                "table": "transform2_table_var3.json",
-                "max_currencies": 36,
-            },
-            # AML-20846035
-            {   
-                "value1": 0x52eb3676,
-                "value2": 0x7952538d,
-                "value3": 0x89527836,
-                "table": "transform2_table_var4.json",
-                "max_currencies": 36, 
-            },  
-            # AML-27555089 / d2a977fa29acda0a7a272670f0706508
-            {   
-                "value1": 0x8af8b34d,
-                "value2": 0x2be8c4b0,
-                "value3": 0xdbe8ef0b,
-                "table": "transform2_table_var5.json",
-                "max_currencies": 36, 
-            },  
-            # AML-27580367 / 9aad1b163fa550f7979d822b6f5078c9
-            {   
-                "value1": 0xa28eafd8,
-                "value2": 0x2edfdb46,
-                "value3": 0xdedff0fd,
-                "table": "transform2_table_var6.json",
-                "max_currencies": 36, 
-            },  
-            # AML-28101739 / 3aa5d612889aeab6295752cdf95b5db0
-            {   
-                "value1": 0xda9ce3f7,
-                "value2": 0xd1cecf92,
-                "value3": 0x21cee429,
-                "table": "transform2_table_var7.json",
-                "max_currencies": 36, 
-            },  
-        ]
-
-    for i, config in enumerate(configs):
-        print "config%d" % i
-
-        dga = BedepDGA(config)
-        domains = dga.run()
-
-        print "\t%d domains:" % len(domains)
-        for domain in domains:
-            print "\t\t%s" % domain
-        print
+def calculate_bedep_domains(current_date, till_date, BEDEP_CONFIGS):
+    while current_date <= till_date:
+        for config in BEDEP_CONFIGS:
+            for seed, validFrom, validTill, domain in BedepDGA(config, current_date).run:
+                yield seed, validFrom, validTill, domain
+        current_date = date_start(validTill + timedelta(days=1))
