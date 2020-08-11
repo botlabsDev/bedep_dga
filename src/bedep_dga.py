@@ -20,7 +20,8 @@ from decimal import Decimal
 from pathlib import Path
 from xml.etree import ElementTree
 
-from src.common import cache_file, get_dgarchive_dga_name, date_start, date_end, next_thursday
+from src.common import cache_file_from_url, get_dgarchive_dga_name, date_start, date_end, next_thursday, \
+    url_to_file_name
 
 logging.basicConfig(filename=f"{__file__}.log", level=logging.DEBUG)
 
@@ -179,7 +180,7 @@ class BedepDGA:
         return three_days_ago
 
     def get_xml_from_url(self, url):
-        file = cache_file(url, Path(__file__).parent.parent / "cache")
+        file = cache_file_from_url(url, Path("/tmp/cache_bedep_dga") / url_to_file_name(url))
         with file.open("rb") as _file:
             return ElementTree.fromstring(file.read_text())
 

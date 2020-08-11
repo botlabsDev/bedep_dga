@@ -15,16 +15,18 @@ def get_dgarchive_dga_name(config):
            f"_{config['max_currencies']}"
 
 
-def cache_file(url: str, cacheFolder: Path):
-    cacheFolder.mkdir(exist_ok=True)
-
-    filename = f"{base64.b64encode(url.encode()).decode()}_{datetime.datetime.now().strftime('%Y-%m-%d')}"
-    cacheFolder = cacheFolder / filename
-
-    if not cacheFolder.exists():
+def cache_file_from_url(url: str, cache_path: Path):
+    cache_path.mkdir(exist_ok=True)
+    cache_file = cache_path / url_to_file_name(url)
+    if not cache_file.exists():
         request = requests.get(url)
-        cacheFolder.write_text(request.text)
-    return cacheFolder
+        request.raise_for_status()
+        cache_file.write_text(request.text)
+    return cache_file
+
+
+def url_to_file_name(url):
+    return f"{base64.b64encode(url.encode()).decode()}_{datetime.datetime.now().strftime('%Y-%m-%d')}"
 
 
 def next_thursday():
