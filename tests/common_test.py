@@ -2,7 +2,7 @@ import datetime
 
 import pytest
 
-from src.common import get_dgarchive_dga_name, cache_file_from_url, url_to_file_name
+from src.common import convert_config_to_dgarchive_dga_seed, cache_file_from_url, url_to_file_name
 
 
 class Test_create_dgarchive_name:
@@ -14,7 +14,7 @@ class Test_create_dgarchive_name:
                    }
 
     def test_name_structure(self):
-        assert get_dgarchive_dga_name(self.test_config) == "bedep_dga_0x1_0x2_0x3_table0_100"
+        assert convert_config_to_dgarchive_dga_seed(self.test_config) == "bedep_dga_0x1_0x2_0x3_table0_100"
 
 
 class Test_cache_file:

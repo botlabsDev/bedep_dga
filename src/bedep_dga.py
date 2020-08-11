@@ -11,7 +11,8 @@
 # WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
+#
+## @botlabsDev WAS HERE TOO.
 
 import json
 import logging
@@ -22,7 +23,7 @@ from decimal import Decimal
 from pathlib import Path
 from xml.etree import ElementTree
 
-from src.common import cache_file_from_url, get_dgarchive_dga_name, date_start, date_end, next_thursday, \
+from src.common import cache_file_from_url, convert_config_to_dgarchive_dga_seed, date_start, date_end, next_thursday, \
     next_wednesday, BedepError
 
 logging.basicConfig(filename=f"{__file__}.log", level=logging.DEBUG)
@@ -59,7 +60,7 @@ class BedepDGA:
         self.transform1(currencies)
 
         domains = [self.transform10(currencies) for _ in range(self.main["num_domains"])]
-        seed = get_dgarchive_dga_name(self.config)
+        seed = convert_config_to_dgarchive_dga_seed(self.config)
 
         for domain in sorted(domains):
             yield seed, self.validFrom, self.validTill, domain
@@ -70,27 +71,28 @@ class BedepDGA:
         # field_38 of "xml" struct
         three_days_ago = self.get_three_days_ago()
         logging.debug("\tfinding correct days since:")
+        currentValid = date_start()
+        lastValid = date_start()
         for date in dates:
             dt = datetime.strptime(date, "%Y-%m-%d")
             # month and day of "date"  are decremented by 1 for days_since algorithm
             # returned days_since will be "date" minus 1
 
             days_since = self.get_days_since(dt.year, dt.month - 1, dt.day - 1)
-            logging.debug((f"\t\ttrying: 0x{hex(days_since)} ({days_since})"))
+            # print((f"\t\ttrying: {dt}, 0x{hex(days_since)} ({days_since})"))
+
+            if (days_since + 5) % 7 == day_of_week:
+                lastValid = currentValid
+                currentValid = dt
 
             if days_since <= three_days_ago and (days_since + 5) % 7 == day_of_week:
-                logging.debug(f"\tfound correct days since: {date}")
-
                 currencies = self.get_currencies(currency_xml, date)
                 self.main["days_since"] = days_since
 
                 self.validFrom = date_start(date) + timedelta(days=2)
-                self.validTill = date_end(date) + timedelta(days=7 + 1)
+                days_between = (lastValid - dt).days
+                self.validTill = date_end(date) + timedelta(days=days_between + 1)
 
-                if date == "2018-12-18":
-                    # tuesday (2018-12-26)  has no currency value
-                    # tuesday (2019-01-01)  has no currency value
-                    self.validTill = datetime(2019, 1, 9)
                 return date, currencies
 
     def _checkValidDate(self, date):
@@ -195,6 +197,15 @@ class BedepDGA:
         with file.open("rb") as _file:
             return ElementTree.fromstring(_file.read())
 
+    def has_currencies(self, xml, date):
+        root = xml
+        cube1 = root.find("{http://www.ecb.int/vocabulary/2002-08-01/eurofxref}Cube")
+        cube2s = cube1.findall("{http://www.ecb.int/vocabulary/2002-08-01/eurofxref}Cube")
+        for cube2 in cube2s:
+            if cube2.get("time") == date:
+                return True
+        return False
+
     def get_currencies(self, xml, date):
         currencies = []
 
@@ -207,10 +218,8 @@ class BedepDGA:
                     if len(currencies) == self.max_currencies:
                         logging.debug("\thit max currencies (%d)" % len(currencies))
                         break
-
                     currency = self.parse_currency(cube3.get("currency"), cube3.get("rate"))
                     currencies.append(currency)
-
                 break
 
         logging.debug("\tparsed %d currencies from %s (currency date):" % (len(currencies), date))
@@ -574,6 +583,7 @@ class BedepDGA:
 
 def calculate_bedep_domains(from_date, till_date, BEDEP_CONFIGS):
     current_date = from_date
+    validTill = till_date
     while current_date <= till_date:
         for config in BEDEP_CONFIGS:
             for seed, validFrom, validTill, domain in BedepDGA(config, current_date).run():

@@ -7,6 +7,8 @@ setup(
     install_requires=[
         "pytest",
         "Pytest-mock",
+        "requests",
+        "pandas"
     ],
     entry_points={"console_scripts": [
         "bedep_dga=src.main:main"

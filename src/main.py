@@ -79,9 +79,9 @@ BEDEP_CONFIGS = [
 def parseArgs():
     parser = argparse.ArgumentParser()
     parser.add_argument("--start", type=date_start, default=date_start(),
-                        help="start; get domains for timerange; (utc-time)")
+                        help="get domains from timerange; (2020-01-01)")
     parser.add_argument("--end", type=date_end, default=date_end(),
-                        help="end; get domains for timerange; (utc-time)")
+                        help="get domains till timerange; (2020-01-31)")
     parser.add_argument("--next-week", default=False, action='store_true',
                         help="get domains for comming week. New domains available on wednesday.")
     return parser.parse_args()

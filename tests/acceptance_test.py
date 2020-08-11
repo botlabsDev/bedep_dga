@@ -239,12 +239,13 @@ def test_calculate_domains_for_one_month():
                                                         '2020-01-15T23:59:59', '2020-01-22T23:59:59',
                                                         '2020-01-29T23:59:59', '2020-02-05T23:59:59'])
 
-@pytest.mark.parametrize("no_currency_date", ["2018-12-26", "2019-01-01"])
-def test_check_new_year_bug(no_currency_date):
+
+@pytest.mark.parametrize("no_currency_date", ['2018-12-26', '2019-01-01'])
+def test_check_no_tuesday_data_bug(no_currency_date):
     domains = calculate_bedep_domains(no_currency_date, no_currency_date)
-    assert len(domains) == 172
+
     assert domains["valid_from"].unique() == ['2018-12-20T00:00:00']
-    assert domains["valid_till"].unique() == ['2019-01-09T00:00:00']
+    assert domains["valid_till"].unique() == ['2019-01-09T23:59:59']
 
 
 def assertCompareArray(firstList, secondList):

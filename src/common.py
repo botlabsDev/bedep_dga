@@ -9,7 +9,7 @@ class BedepError(RuntimeError):
     pass
 
 
-def get_dgarchive_dga_name(config):
+def convert_config_to_dgarchive_dga_seed(config):
     usedTable = config['table'].split(".")[0]
     return f"bedep_dga" \
            f"_{hex(config['value1'])}" \
