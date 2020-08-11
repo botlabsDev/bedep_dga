@@ -10,7 +10,7 @@ from src.common import next_wednesday, next_thursday
 class TestClass:
     @pytest.fixture(autouse=True, scope="function")
     def setup(self, monkeypatch):
-        self.current_fake_time = None
+        self.current_fake_time = datetime.datetime.now()
 
         class patched_datetime(datetime.datetime):
             pass
@@ -21,20 +21,20 @@ class TestClass:
         def fake_datetime_today():
             return self.current_fake_time
 
-        class FakeResponse:
-            text = "TEST_DATA"
-
-            def __init__(self, *args):
-                pass
-
-            def raise_for_status(self):
-                pass
+        # class FakeResponse:
+        #     text = "TEST_DATA"
+        #
+        #     def __init__(self, *args):
+        #         pass
+        #
+        #     def raise_for_status(self):
+        #         pass
 
         monkeypatch.setattr(patched_datetime, "now", fake_datetime_now)
         monkeypatch.setattr(patched_datetime, "today", fake_datetime_today)
         datetime.datetime = patched_datetime
 
-        monkeypatch.setattr("requests.get", FakeResponse)
+        # monkeypatch.setattr("requests.get", FakeResponse)
 
 
 class Test_domain_calculation():
@@ -146,3 +146,18 @@ class Test_Bedep_dga(TestClass):
                                    datetime.datetime(2020, 1, 9, 0, 0),
                                    datetime.datetime(2020, 1, 15, 23, 59, 59),
                                    'ajqyqjqrbijgyg.com')
+
+    def test_fix_new_year_bug_one(self):
+        today_is_wednesday = datetime.datetime(2020, 1, 8)
+        self.current_fake_time = today_is_wednesday
+
+        tuesday = datetime.datetime(2019, 1, 1)
+        dga = BedepDGA(self.config, tuesday)
+        dga.cache_path = Path(__file__).parent / "test_cache"
+
+        domains_exist = set()
+        for d in dga.run():
+            print(d)
+            assert d not in domains_exist
+            domains_exist.add(d)
+

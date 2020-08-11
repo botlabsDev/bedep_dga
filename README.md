@@ -6,8 +6,9 @@ The original bedep_dga.py script is awesome work, but it lacks an option to calc
 domains used in the past.
 
 This extended version provides:
-   * fixed off by one bug - domains are valid from Thursday to next Wednesday
-   * add an option to calculate all domains ever used by bedep
+* add an option to calculate all domains ever used by bedep
+* fixed off by one bug - domains are valid from Thursday to next Wednesday   
+* fixed "new year bug" - 2018-2019 has tuesdays with no currency data 
   
 
 

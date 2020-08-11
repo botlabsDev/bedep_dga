@@ -191,16 +191,20 @@ seedsAndDomains = {"bedep_dga_0x9be6851a_0xd666e1f3_0x2666ca48_table1_48": ["tzx
                    }
 
 
+def calculate_bedep_domains(start, end):
+    cmd = ["bedep_dga", "--start", start, "--end", end]
+
+    output = subprocess.check_output(cmd, universal_newlines=True)
+    df = pandas.read_csv(io.StringIO(output))
+    df.set_index("domain", inplace=True)
+    return df
+
+
 class Test_bedep_domains_for_2020_08_06:
 
     @pytest.fixture(scope="class")
     def bedep_domains_for_2020_08_06(self):
-        cmd = ["bedep_dga", "--start", "2020-08-06", "--end", "2020-08-06"]
-
-        output = subprocess.check_output(cmd, universal_newlines=True)
-        df = pandas.read_csv(io.StringIO(output))
-        df.set_index("domain", inplace=True)
-        return df
+        return calculate_bedep_domains("2020-08-06", "2020-08-06")
 
     @pytest.mark.parametrize("seed", seedsAndDomains, ids=seedsAndDomains.keys())
     def test_all_domains_are_calculated(self, bedep_domains_for_2020_08_06, seed):
@@ -210,7 +214,7 @@ class Test_bedep_domains_for_2020_08_06:
             assert data["valid_from"] == "2020-08-06T00:00:00"
             assert data["valid_till"] == "2020-08-12T23:59:59"
 
-    def test_amount_of_calculated_domains(self, bedep_domains_for_2020_08_06):
+    def test_validate_amount_of_calculated_domains(self, bedep_domains_for_2020_08_06):
         number_of_seeds = len(bedep_domains_for_2020_08_06["seed"].unique())
         number_of_entries = len(bedep_domains_for_2020_08_06)
 
@@ -222,3 +226,26 @@ class Test_bedep_domains_for_2020_08_06:
 
         assert number_of_seeds == 7
         assert number_of_entries == 184
+
+
+def test_calculate_domains_for_one_month():
+    domains = calculate_bedep_domains("2020-01-01", "2020-02-01")
+    assert len(domains) == 1026
+
+    assertCompareArray(domains["valid_from"].unique(), ['2019-12-26T00:00:00', '2020-01-02T00:00:00',
+                                                        '2020-01-09T00:00:00', '2020-01-16T00:00:00',
+                                                        '2020-01-23T00:00:00', '2020-01-30T00:00:00'])
+    assertCompareArray(domains["valid_till"].unique(), ['2020-01-01T23:59:59', '2020-01-08T23:59:59',
+                                                        '2020-01-15T23:59:59', '2020-01-22T23:59:59',
+                                                        '2020-01-29T23:59:59', '2020-02-05T23:59:59'])
+
+@pytest.mark.parametrize("no_currency_date", ["2018-12-26", "2019-01-01"])
+def test_check_new_year_bug(no_currency_date):
+    domains = calculate_bedep_domains(no_currency_date, no_currency_date)
+    assert len(domains) == 172
+    assert domains["valid_from"].unique() == ['2018-12-20T00:00:00']
+    assert domains["valid_till"].unique() == ['2019-01-09T00:00:00']
+
+
+def assertCompareArray(firstList, secondList):
+    assert all([a == b for a, b in zip(sorted(firstList), sorted(secondList))])

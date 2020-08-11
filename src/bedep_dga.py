@@ -11,6 +11,8 @@
 # WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+
 import json
 import logging
 import random
@@ -49,15 +51,24 @@ class BedepDGA:
         # domains valid from Thursday to Wednesday == 7 days
         # calculation based on currency data from Tuesday, published on Wednesday
 
-        # field_38 of "xml" struct
-        three_days_ago = self.get_three_days_ago()
-
-        # field_3c of "xml" struct"
-        day_of_week = 1  # monday
-
         currency_xml = self.get_xml_from_url(URL_CURRENCY_XML)
         dates = self.extract_dates_from_currency(currency_xml)
 
+        date, currencies = self._find_date_and_currencies(dates, currency_xml)
+
+        self.transform1(currencies)
+
+        domains = [self.transform10(currencies) for _ in range(self.main["num_domains"])]
+        seed = get_dgarchive_dga_name(self.config)
+
+        for domain in sorted(domains):
+            yield seed, self.validFrom, self.validTill, domain
+
+    def _find_date_and_currencies(self, dates, currency_xml):
+        # field_3c of "xml" struct"
+        day_of_week = 1  # monday
+        # field_38 of "xml" struct
+        three_days_ago = self.get_three_days_ago()
         logging.debug("\tfinding correct days since:")
         for date in dates:
             dt = datetime.strptime(date, "%Y-%m-%d")
@@ -72,17 +83,15 @@ class BedepDGA:
 
                 currencies = self.get_currencies(currency_xml, date)
                 self.main["days_since"] = days_since
+
                 self.validFrom = date_start(date) + timedelta(days=2)
                 self.validTill = date_end(date) + timedelta(days=7 + 1)
-                break
 
-        self.transform1(currencies)
-
-        domains = [self.transform10(currencies) for _ in range(self.main["num_domains"])]
-        seed = get_dgarchive_dga_name(self.config)
-
-        for domain in sorted(domains):
-            yield seed, self.validFrom, self.validTill, domain
+                if date == "2018-12-18":
+                    # tuesday (2018-12-26)  has no currency value
+                    # tuesday (2019-01-01)  has no currency value
+                    self.validTill = datetime(2019, 1, 9)
+                return date, currencies
 
     def _checkValidDate(self, date):
         date_can_not_be_calculated = (date > date_end(next_wednesday()))
@@ -567,6 +576,7 @@ def calculate_bedep_domains(from_date, till_date, BEDEP_CONFIGS):
     current_date = from_date
     while current_date <= till_date:
         for config in BEDEP_CONFIGS:
-            for seed, validFrom, validTill, domain in BedepDGA(config, from_date).run():
+            for seed, validFrom, validTill, domain in BedepDGA(config, current_date).run():
                 yield seed, validFrom, validTill, domain
+
         current_date = date_start(validTill + timedelta(days=1))
