@@ -5,13 +5,15 @@ Initially published and forked from https://github.com/arbor/bedep_dga #ThanksFo
 The original bedep_dga.py script is awesome work, but it lacks an option to calculate the bedep 
 domains used in the past.
 
-This extended version mainly adds an option to calculate all domains ever used by bedep.
+This extended version provides:
+   * fixed off by one bug - domains are valid from Thursday to next Wednesday
+   * add an option to calculate all domains ever used by bedep
+  
 
 
 
 
-
-## Environement
+## Setup Environement
 ```shell script
 $ git clone https://github.com/botlabsDev/bedep_dga
 $ cd bedep_dga
@@ -19,7 +21,7 @@ $ . ./bootstrap # create virtualenv and activate
 ```
 
 
-## Execution
+## Execute DGA
 
 ```shell script
 ## get currently used domains for this week
@@ -36,8 +38,11 @@ $ . ./bootstrap # create virtualenv and activate
 
 ```
 
-## Csv
+## Create CSV
 
 ```shell script
 (venv) $ bedep_dga > domains.csv
 ```
+
+
+
