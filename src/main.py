@@ -91,13 +91,13 @@ def main():
     args = parseArgs()
 
     start_date = args.start
-    till_date = args.end
+    end_date = args.end
 
     if args.next_week:
         start_date = next_thursday()
-        till_date = next_thursday()
+        end_date = next_thursday()
 
-    domains = calculate_bedep_domains(start_date, till_date, BEDEP_CONFIGS)
+    domains = calculate_bedep_domains(start_date, end_date, BEDEP_CONFIGS)
 
     print("seed,valid_from,valid_till,domain")
     for seed, validFrom, validTill, domain in domains:

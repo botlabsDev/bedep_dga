@@ -21,7 +21,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from src.common import cache_file_from_url, get_dgarchive_dga_name, date_start, date_end, next_thursday, \
-    url_to_file_name
+    next_wednesday, BedepError
 
 logging.basicConfig(filename=f"{__file__}.log", level=logging.DEBUG)
 
@@ -43,20 +43,8 @@ class BedepDGA:
         self.max_currencies = self.config["max_currencies"]
         self.transform2_table = self._load_table(self.config["table"])
         self.main = self._getMainStruct()
+        self.cache_path = Path("/tmp/cache_bedep_dga")
 
-    def _checkValidDate(self, date):
-        if ((date_start(datetime.now()) == next_thursday() - timedelta(days=1))
-                and (date <= next_thursday())):
-            return
-
-        elif date >= next_thursday():
-            print("###")
-            print("Can not calculate the requested domains. The DGA generates domains each Wednesday for the following "
-                  "seven days. Please try again on Wednesday.")
-            print("###")
-            exit()
-
-    @property
     def run(self):
         # domains valid from Thursday to Wednesday == 7 days
         # calculation based on currency data from Tuesday, published on Wednesday
@@ -93,8 +81,22 @@ class BedepDGA:
         domains = [self.transform10(currencies) for _ in range(self.main["num_domains"])]
         seed = get_dgarchive_dga_name(self.config)
 
-        for domain in domains:
+        for domain in sorted(domains):
             yield seed, self.validFrom, self.validTill, domain
+
+    def _checkValidDate(self, date):
+        date_can_not_be_calculated = (date > date_end(next_wednesday()))
+        request_on_wednesday_for_next_week = ((date_start() == next_wednesday()) and
+                                              (date <= date_end(next_thursday())))
+
+        if request_on_wednesday_for_next_week:
+            return
+        elif date_can_not_be_calculated:
+            raise BedepError("""###
+            Can not calculate the requested domains. The DGA generates domains each Wednesday for the following 
+            seven days. Please try again on Wednesday 
+            ###""")
+        return
 
     def _load_table(self, table_name):
         # table extracted from dll
@@ -180,9 +182,9 @@ class BedepDGA:
         return three_days_ago
 
     def get_xml_from_url(self, url):
-        file = cache_file_from_url(url, Path("/tmp/cache_bedep_dga") / url_to_file_name(url))
+        file = cache_file_from_url(url, self.cache_path)
         with file.open("rb") as _file:
-            return ElementTree.fromstring(file.read_text())
+            return ElementTree.fromstring(_file.read())
 
     def get_currencies(self, xml, date):
         currencies = []
@@ -561,9 +563,10 @@ class BedepDGA:
         return ((num >> count) | (num << (size - count)))
 
 
-def calculate_bedep_domains(current_date, till_date, BEDEP_CONFIGS):
+def calculate_bedep_domains(from_date, till_date, BEDEP_CONFIGS):
+    current_date = from_date
     while current_date <= till_date:
         for config in BEDEP_CONFIGS:
-            for seed, validFrom, validTill, domain in BedepDGA(config, current_date).run:
+            for seed, validFrom, validTill, domain in BedepDGA(config, from_date).run():
                 yield seed, validFrom, validTill, domain
         current_date = date_start(validTill + timedelta(days=1))

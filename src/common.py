@@ -5,6 +5,10 @@ from pathlib import Path
 import requests
 
 
+class BedepError(RuntimeError):
+    pass
+
+
 def get_dgarchive_dga_name(config):
     usedTable = config['table'].split(".")[0]
     return f"bedep_dga" \
@@ -29,22 +33,33 @@ def url_to_file_name(url):
     return f"{base64.b64encode(url.encode()).decode()}_{datetime.datetime.now().strftime('%Y-%m-%d')}"
 
 
-def next_thursday():
-    current_weekday = datetime.datetime.today().weekday()
-    days_till_wednesday = (14 - 4 - current_weekday) % 7
+def next_wednesday(date=None):
+    if date is None:
+        date = datetime.datetime.today()
+    current_weekday = date.weekday()
+    days_till_wednesday = (14 - 5 - current_weekday) % 7
     return date_start() + datetime.timedelta(days=days_till_wednesday)
 
 
-def date_start(input=None):
-    if not input:
+def next_thursday(date=None):
+    if date is None:
+        date = datetime.datetime.today()
+    current_weekday = date.weekday()
+    days_till_thursday = (14 - 4 - current_weekday) % 7
+    return date_start() + datetime.timedelta(days=days_till_thursday)
+
+
+def date_start(strDate=None):
+    if not strDate:
         return (datetime.datetime.today()).replace(hour=0, minute=0, second=0, microsecond=0)
     else:
-        input = str(input).split(" ")[0]
-        return datetime.datetime.strptime(input, "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0)
+        strDate = str(strDate).split(" ")[0]
+        return datetime.datetime.strptime(strDate, "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def date_end(input=None):
-    if not input:
+def date_end(strDate=None):
+    if not strDate:
         return (datetime.datetime.today()).replace(hour=23, minute=59, second=59, microsecond=0)
     else:
-        return datetime.datetime.strptime(input, "%Y-%m-%d").replace(hour=23, minute=59, second=59, microsecond=0)
+        strDate = str(strDate).split(" ")[0]
+        return datetime.datetime.strptime(strDate, "%Y-%m-%d").replace(hour=23, minute=59, second=59, microsecond=0)
